@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from ultralytics import YOLO
+import torch
 from camera import Camera
 from deepface import DeepFace
 import threading
@@ -32,6 +33,10 @@ DETECTOR_BACKEND = "opencv"
 cam   = Camera(CAM_IP, CAM_PORT, CAM_USER, CAM_PASS)
 model = YOLO(MODEL_PATH)
 cap   = cv2.VideoCapture(RTSP_URL)
+
+DEVICE = 0 if torch.cuda.is_available() else "cpu"
+DEVICE_NAME = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+print(f"[INFO] YOLO inference device: {DEVICE_NAME}")
 
 cv2.namedWindow("YOLOv8 Person Detection", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("YOLOv8 Person Detection", FRAME_W, FRAME_H)
@@ -216,7 +221,7 @@ else:
         frame_count += 1
 
         h, w = frame.shape[:2]
-        results = list(model(frame, stream=True, conf=CONF_THRESHOLD))
+        results = list(model(frame, stream=True, conf=CONF_THRESHOLD, device=DEVICE))
 
         annotated = frame.copy()
         person_count = 0
