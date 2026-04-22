@@ -37,7 +37,7 @@ class Camera:
             return resp
 
         except requests.exceptions.RequestException as e:
-            print(f"[!] Greška: {e}")
+            print(f"[!] Error: {e}")
             return None
 
     def move(self, pan=0.0, tilt=0.0, zoom=0.0, profile="Profile_1"):
