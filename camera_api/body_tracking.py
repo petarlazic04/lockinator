@@ -9,7 +9,7 @@ from pathlib import Path
 import time
 
 # ── Configuration ─────────────────────────────────────────
-CAM_IP         = "192.168.1.15"
+CAM_IP         = "192.168.50.222"
 CAM_PORT       = 8899
 CAM_USER       = "admin"
 CAM_PASS       = "admin123"
