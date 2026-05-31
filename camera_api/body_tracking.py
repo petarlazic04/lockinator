@@ -10,6 +10,8 @@ from pathlib import Path
 import time
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+import os
+from datetime import datetime
 
 # ── Configuration ─────────────────────────────────────────
 CAM_IP         = "192.168.50.222"
@@ -32,6 +34,12 @@ FACE_SIMILARITY_THRESHOLD = 0.5
 MODEL_NAME = "Facenet512"
 DETECTOR_BACKEND = "opencv"
 # ──────────────────────────────────────────────────────────
+
+# Recording configuration for unknown person events
+RECORDINGS_DIR = Path(__file__).resolve().parent / "recordings"
+RECORD_FPS = 20
+RECORD_BUFFER_SECONDS = 5.0  # keep recording this many seconds after person disappears
+RECORD_CODEC = "mp4v"
 
 cam   = Camera(CAM_IP, CAM_PORT, CAM_USER, CAM_PASS)
 model = YOLO(MODEL_PATH)
@@ -68,6 +76,10 @@ host_next_toggle_at = 0.0
 latest_recognized_box = None
 host_confirm_start = None
 host_confirmed = False
+# Recording runtime state
+recording = False
+record_writer = None
+recording_stop_at = 0.0
 # saved absolute position to restore after host leaves
 saved_pan = None
 saved_tilt = None
@@ -412,6 +424,46 @@ def _maintain_home_view():
     maintain_home_thread_started = False
 
 
+def _ensure_recordings_dir():
+    try:
+        RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+
+def start_recording(frame):
+    global recording, record_writer, recording_stop_at
+    if recording:
+        return
+    _ensure_recordings_dir()
+    now = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = RECORDINGS_DIR / f"intruder_{now}.mp4"
+    h, w = frame.shape[:2]
+    fourcc = cv2.VideoWriter_fourcc(*RECORD_CODEC)
+    try:
+        record_writer = cv2.VideoWriter(str(filename), fourcc, RECORD_FPS, (w, h))
+        recording = True
+        recording_stop_at = 0.0
+        print(f"[INFO] Started recording: {filename}")
+    except Exception as e:
+        print(f"[WARN] Cannot start recording: {e}")
+
+
+def stop_recording():
+    global recording, record_writer, recording_stop_at
+    if not recording:
+        return
+    try:
+        if record_writer is not None:
+            record_writer.release()
+    except Exception:
+        pass
+    recording = False
+    record_writer = None
+    recording_stop_at = 0.0
+    print("[INFO] Recording stopped")
+
+
 def best_detection(results, frame_w, frame_h):
     """Return bounding box of the largest valid person detection."""
     best_box  = None
@@ -529,6 +581,25 @@ else:
         if host_confirmed:
             # show overlay that host is present and camera is on home view
             put_text_right(annotated, "Host present - home view", row=5, color=(0, 200, 0))
+        # show recording overlay if active
+        if recording:
+            put_text_right(annotated, "REC: recording...", row=6, color=(0, 0, 255))
+        # start/stop recording logic: when an intruder (unknown person) is present start recording
+        if intruder_present and not recording:
+            start_recording(frame)
+        if recording:
+            # write frame to file
+            try:
+                if record_writer is not None:
+                    record_writer.write(frame)
+            except Exception:
+                pass
+            # if intruder disappeared, schedule stop after buffer
+            if not intruder_present:
+                if recording_stop_at == 0.0:
+                    recording_stop_at = time.time() + RECORD_BUFFER_SECONDS
+                elif time.time() >= recording_stop_at:
+                    stop_recording()
         if track_box is not None:
             x1, y1, x2, y2 = track_box
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
