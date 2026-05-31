@@ -62,9 +62,9 @@ recognition_result_lock = threading.Lock()
 latest_face_label = "Searching..."
 latest_face_distance = None
 HOST_NAMES = {"pero", "djuro"}
-HOST_TIMEOUT = 5.0
+HOST_TOGGLE_COOLDOWN = 3.0
 host_present = False
-host_present_expires = 0.0
+host_next_toggle_at = 0.0
 latest_recognized_box = None
 host_confirm_start = None
 host_confirmed = False
@@ -212,7 +212,7 @@ def load_reference_embeddings_async(db_path: Path):
 
 def recognition_worker():
     global latest_face_label, latest_face_distance
-    global host_present, host_present_expires, latest_recognized_box
+    global host_present, host_next_toggle_at, latest_recognized_box
     global KNOWN_NAMES, intruder_present, intruder_expires, intruder_box
     global host_confirm_start, host_confirmed, maintain_home_thread_started
 
@@ -228,11 +228,14 @@ def recognition_worker():
             latest_face_label = label
             latest_face_distance = distance
 
-        # Toggle host present/absent on each detection of a host name
+        # Toggle host mode only on host detections, with cooldown to avoid double-triggering from one pass.
         if label in HOST_NAMES:
             now = time.time()
+            if now < host_next_toggle_at:
+                continue
+
+            host_next_toggle_at = now + HOST_TOGGLE_COOLDOWN
             latest_recognized_box = box
-            host_present_expires = now + HOST_TIMEOUT
 
             if not host_present:
                 host_present = True
@@ -246,6 +249,11 @@ def recognition_worker():
                 if not maintain_home_thread_started:
                     maintain_home_thread_started = True
                     threading.Thread(target=_maintain_home_view, daemon=True).start()
+            else:
+                host_present = False
+                host_confirmed = False
+                latest_recognized_box = None
+                threading.Thread(target=_restore_prev_view, daemon=True).start()
         else:
             # known person (guest) — update latest_recognized_box
             if label in KNOWN_NAMES:
@@ -492,17 +500,10 @@ else:
                     except Exception:
                         pass
 
-        # Toggle mode: recognition_worker controls host enter/exit; no timeout-based host expiry here
         # expire intruder flag if timeout passed
         if intruder_present and time.time() > intruder_expires:
             intruder_present = False
             intruder_box = None
-
-        if host_present and time.time() > host_present_expires:
-            host_present = False
-            host_confirmed = False
-            latest_recognized_box = None
-            threading.Thread(target=_restore_prev_view, daemon=True).start()
 
         for box, conf in detection_list:
             x1, y1, x2, y2 = box
