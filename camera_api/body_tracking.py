@@ -3,21 +3,13 @@ import numpy as np
 from ultralytics import YOLO
 import torch
 from camera import Camera
+from deepface import DeepFace
 import threading
 from queue import Queue, Empty
 from pathlib import Path
 import time
-<<<<<<< HEAD
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-=======
-from retinaface import RetinaFace
-from insightface.app import FaceAnalysis
-
-
-face_app = FaceAnalysis(name="buffalo_l")
-face_app.prepare(ctx_id=0 if torch.cuda.is_available() else -1, det_size=(320, 320))
->>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
 
 # ── Configuration ─────────────────────────────────────────
 CAM_IP         = "192.168.50.222"
@@ -29,19 +21,16 @@ MODEL_PATH     = "yolov8n-face.pt"
 DB_PATH        = Path(__file__).resolve().parent / "pictures"
 
 FRAME_W, FRAME_H = 960, 540
-DEAD_ZONE      = 0.25
+DEAD_ZONE      = 0.15
 PAN_SPEED      = 0.5
 TILT_SPEED     = 0.3
 MOVE_DURATION  = 0.01
 CONF_THRESHOLD = 0.5
-<<<<<<< HEAD
 RECOGNITION_EVERY = 30
 ENABLE_FACE_RECOGNITION = True
-=======
-RECOGNITION_EVERY = 15
-ENABLE_FACE_RECOGNITION = False
->>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
 FACE_SIMILARITY_THRESHOLD = 0.5
+MODEL_NAME = "Facenet512"
+DETECTOR_BACKEND = "opencv"
 # ──────────────────────────────────────────────────────────
 
 cam   = Camera(CAM_IP, CAM_PORT, CAM_USER, CAM_PASS)
@@ -82,11 +71,6 @@ host_confirmed = False
 # saved absolute position to restore after host leaves
 saved_pan = None
 saved_tilt = None
-# detection toggle counter: each detection of any host toggles present/absent
-host_detection_count = 0
-# ignore additional host detections for a short period after each toggle
-HOST_TOGGLE_HOLD = 3.0
-host_toggle_hold_until = 0.0
 
 # Hardcoded camera coordinates when host present (adjust as needed)
 HARD_PAN = 0.0
@@ -128,38 +112,41 @@ def cosine_similarity(vec1, vec2):
 
 
 def load_reference_embeddings(db_path: Path):
-<<<<<<< HEAD
     if not db_path.exists():
         print(f"[WARN] DB folder does not exist: {db_path}")
         return []
 
     image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
     embeddings = []
-=======
-    embeddings = []
-
->>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
     for image_path in db_path.rglob("*"):
-        if image_path.suffix.lower() not in {".jpg", ".png", ".jpeg"}:
+        if image_path.suffix.lower() not in image_extensions:
             continue
 
-        img = cv2.imread(str(image_path))
-        if img is None:
+        person_name = image_path.parent.name or image_path.stem
+        try:
+            representation = DeepFace.represent(
+                img_path=str(image_path),
+                model_name=MODEL_NAME,
+                detector_backend=DETECTOR_BACKEND,
+                enforce_detection=False,
+            )
+        except Exception as exc:
+            print(f"[WARN] Cannot load reference {image_path}: {exc}")
             continue
 
-        faces = face_app.get(img)
-        if len(faces) == 0:
+        if not representation:
             continue
 
-        # uzmi NAJVEĆE lice (bitno!)
-        face = max(faces, key=lambda f: f.bbox[2] * f.bbox[3])
+        if isinstance(representation, list):
+            representation = representation[0]
 
-        emb = face.embedding
-        name = image_path.parent.name
+        embedding = representation.get("embedding") if isinstance(representation, dict) else None
+        if embedding is None:
+            continue
 
-        embeddings.append((name, emb.astype(np.float32)))
+        embeddings.append((person_name, np.asarray(embedding, dtype=np.float32)))
 
-    print(f"[INFO] Loaded {len(embeddings)} faces")
+    print(f"[INFO] Loaded {len(embeddings)} reference embeddings")
     return embeddings
 
 
@@ -227,8 +214,7 @@ def recognition_worker():
     global latest_face_label, latest_face_distance
     global host_present, host_present_expires, latest_recognized_box
     global KNOWN_NAMES, intruder_present, intruder_expires, intruder_box
-    global host_confirm_start, host_confirmed, host_detection_count, maintain_home_thread_started
-    global host_toggle_hold_until
+    global host_confirm_start, host_confirmed, maintain_home_thread_started
 
     while True:
         item = recognition_queue.get()
@@ -245,43 +231,21 @@ def recognition_worker():
         # Toggle host present/absent on each detection of a host name
         if label in HOST_NAMES:
             now = time.time()
-            if now < host_toggle_hold_until:
-                continue
+            latest_recognized_box = box
+            host_present_expires = now + HOST_TIMEOUT
 
-            host_detection_count_local = None
-            # update shared counter and determine new state
-            try:
-                # increment global counter and compute parity
-                host_detection_count += 1
-                host_detection_count_local = host_detection_count
-            except Exception:
-                host_detection_count_local = None
-
-            if host_detection_count_local is not None:
-                new_host_present = (host_detection_count_local % 2 == 1)
-                # state changed to present
-                if new_host_present and not host_present:
-                    host_present = True
-                    latest_recognized_box = box
-                    # clear intruder state
-                    intruder_present = False
-                    intruder_box = None
-                    host_confirmed = True
-                    # move to host home view
-                    threading.Thread(target=_goto_host_view, daemon=True).start()
-                    # start maintain thread if not started
-                    if not maintain_home_thread_started:
-                        maintain_home_thread_started = True
-                        threading.Thread(target=_maintain_home_view, daemon=True).start()
-                # state changed to absent
-                elif (not new_host_present) and host_present:
-                    host_present = False
-                    latest_recognized_box = None
-                    host_confirmed = False
-                    # restore previous camera position
-                    threading.Thread(target=_restore_prev_view, daemon=True).start()
-
-                host_toggle_hold_until = now + HOST_TOGGLE_HOLD
+            if not host_present:
+                host_present = True
+                # clear intruder state
+                intruder_present = False
+                intruder_box = None
+                host_confirmed = True
+                # move to host home view
+                threading.Thread(target=_goto_host_view, daemon=True).start()
+                # start maintain thread if not started
+                if not maintain_home_thread_started:
+                    maintain_home_thread_started = True
+                    threading.Thread(target=_maintain_home_view, daemon=True).start()
         else:
             # known person (guest) — update latest_recognized_box
             if label in KNOWN_NAMES:
@@ -296,7 +260,6 @@ def recognition_worker():
 
 
 def recognize_face(frame, reference_embeddings):
-<<<<<<< HEAD
     try:
         representation = DeepFace.represent(
             img_path=frame,
@@ -306,29 +269,33 @@ def recognize_face(frame, reference_embeddings):
         )
     except Exception as exc:
         log_throttle('deepface_error', f"[WARN] DeepFace error: {exc}", interval=10.0)
-=======
-    faces = face_app.get(frame)
-
-    if len(faces) == 0:
->>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
         return "Unknown", None
 
-    face = max(faces, key=lambda f: f.det_score)
-    emb = face.embedding.astype(np.float32)
+    if not representation:
+        return "Unknown", None
 
-    best_name = "Unknown"
-    best_score = -1
+    if isinstance(representation, list):
+        representation = representation[0]
 
-    for name, ref in reference_embeddings:
-        score = cosine_similarity(emb, ref)
+    embedding = representation.get("embedding") if isinstance(representation, dict) else None
+    if embedding is None or not reference_embeddings:
+        return "Unknown", None
+
+    best_person = "Unknown"
+    best_score = -1.0
+    embedding = np.asarray(embedding, dtype=np.float32)
+
+    for person_name, reference_embedding in reference_embeddings:
+        score = cosine_similarity(embedding, reference_embedding)
         if score > best_score:
             best_score = score
-            best_name = name
+            best_person = person_name
 
     if best_score < FACE_SIMILARITY_THRESHOLD:
-        return "Unknown", best_score
+        return "Unknown", None
 
-    return best_name, best_score
+    return best_person, best_score
+
 
 def crop_for_recognition(frame, box, padding=0.25):
     if box is None:
@@ -476,14 +443,10 @@ if not cap.isOpened():
     print("Error: could not open camera stream.")
 else:
     print("[INFO] Running YOLOv8 Person Detection. Press 'q' to quit.")
-<<<<<<< HEAD
     print(f"[INFO] DB: {DB_PATH}")
     print("[INFO] Loading face recognition reference embeddings in background...")
     load_reference_embeddings_async(DB_PATH)
     threading.Thread(target=recognition_worker, daemon=True).start()
-=======
-    print(f"[INFO] Face DB: {DB_PATH}")
->>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
     frame_count = 0
     while True:
         ret, frame = cap.read()
@@ -495,7 +458,7 @@ else:
         frame_count += 1
 
         h, w = frame.shape[:2]
-        results = model(frame, conf=CONF_THRESHOLD, device=DEVICE)
+        results = list(model(frame, stream=True, conf=CONF_THRESHOLD, device=DEVICE))
 
         annotated = frame.copy()
         person_count = 0
@@ -514,7 +477,6 @@ else:
                 x1, y1, x2, y2 = map(int, detection_box.xyxy[0])
                 detection_list.append(((x1, y1, x2, y2), conf))
 
-<<<<<<< HEAD
         # choose box to recognize every Nth frame (largest detected person)
         recognition_box = None
         if detection_list and frame_count % RECOGNITION_EVERY == 0:
@@ -536,6 +498,12 @@ else:
             intruder_present = False
             intruder_box = None
 
+        if host_present and time.time() > host_present_expires:
+            host_present = False
+            host_confirmed = False
+            latest_recognized_box = None
+            threading.Thread(target=_restore_prev_view, daemon=True).start()
+
         for box, conf in detection_list:
             x1, y1, x2, y2 = box
             bw = x2 - x1
@@ -549,21 +517,6 @@ else:
 
             cv2.rectangle(annotated, (x1, y1), (x2, y2), draw_color, thickness)
             cv2.putText(annotated, label_txt, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, draw_color, 2)
-=======
-                person_count += 1
-                cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                cv2.putText(annotated, f"Person {person_count} {conf:.2f}",
-                            (x1, y1 - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 0), 2)
-
-        if ENABLE_FACE_RECOGNITION and best_box is not None and frame_count % RECOGNITION_EVERY == 0:
-            if not reference_embeddings:
-                print("[INFO] Loading DeepFace reference embeddings...")
-                reference_embeddings = load_reference_embeddings(DB_PATH)
-
-
-                face_label, face_distance = recognize_face(frame, reference_embeddings)
->>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
 
         cx, cy, pan, tilt = 0.0, 0.0, 0.0, 0.0
 
