@@ -3,13 +3,21 @@ import numpy as np
 from ultralytics import YOLO
 import torch
 from camera import Camera
-from deepface import DeepFace
 import threading
 from queue import Queue, Empty
 from pathlib import Path
 import time
+<<<<<<< HEAD
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+=======
+from retinaface import RetinaFace
+from insightface.app import FaceAnalysis
+
+
+face_app = FaceAnalysis(name="buffalo_l")
+face_app.prepare(ctx_id=0 if torch.cuda.is_available() else -1, det_size=(320, 320))
+>>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
 
 # ── Configuration ─────────────────────────────────────────
 CAM_IP         = "192.168.50.222"
@@ -21,16 +29,19 @@ MODEL_PATH     = "yolov8n-face.pt"
 DB_PATH        = Path(__file__).resolve().parent / "pictures"
 
 FRAME_W, FRAME_H = 960, 540
-DEAD_ZONE      = 0.15
+DEAD_ZONE      = 0.25
 PAN_SPEED      = 0.5
 TILT_SPEED     = 0.3
 MOVE_DURATION  = 0.01
 CONF_THRESHOLD = 0.5
+<<<<<<< HEAD
 RECOGNITION_EVERY = 30
 ENABLE_FACE_RECOGNITION = True
+=======
+RECOGNITION_EVERY = 15
+ENABLE_FACE_RECOGNITION = False
+>>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
 FACE_SIMILARITY_THRESHOLD = 0.5
-MODEL_NAME = "Facenet512"
-DETECTOR_BACKEND = "opencv"
 # ──────────────────────────────────────────────────────────
 
 cam   = Camera(CAM_IP, CAM_PORT, CAM_USER, CAM_PASS)
@@ -117,41 +128,38 @@ def cosine_similarity(vec1, vec2):
 
 
 def load_reference_embeddings(db_path: Path):
+<<<<<<< HEAD
     if not db_path.exists():
         print(f"[WARN] DB folder does not exist: {db_path}")
         return []
 
     image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
     embeddings = []
+=======
+    embeddings = []
+
+>>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
     for image_path in db_path.rglob("*"):
-        if image_path.suffix.lower() not in image_extensions:
+        if image_path.suffix.lower() not in {".jpg", ".png", ".jpeg"}:
             continue
 
-        person_name = image_path.parent.name or image_path.stem
-        try:
-            representation = DeepFace.represent(
-                img_path=str(image_path),
-                model_name=MODEL_NAME,
-                detector_backend=DETECTOR_BACKEND,
-                enforce_detection=False,
-            )
-        except Exception as exc:
-            print(f"[WARN] Cannot load reference {image_path}: {exc}")
+        img = cv2.imread(str(image_path))
+        if img is None:
             continue
 
-        if not representation:
+        faces = face_app.get(img)
+        if len(faces) == 0:
             continue
 
-        if isinstance(representation, list):
-            representation = representation[0]
+        # uzmi NAJVEĆE lice (bitno!)
+        face = max(faces, key=lambda f: f.bbox[2] * f.bbox[3])
 
-        embedding = representation.get("embedding") if isinstance(representation, dict) else None
-        if embedding is None:
-            continue
+        emb = face.embedding
+        name = image_path.parent.name
 
-        embeddings.append((person_name, np.asarray(embedding, dtype=np.float32)))
+        embeddings.append((name, emb.astype(np.float32)))
 
-    print(f"[INFO] Loaded {len(embeddings)} reference embeddings")
+    print(f"[INFO] Loaded {len(embeddings)} faces")
     return embeddings
 
 
@@ -288,6 +296,7 @@ def recognition_worker():
 
 
 def recognize_face(frame, reference_embeddings):
+<<<<<<< HEAD
     try:
         representation = DeepFace.represent(
             img_path=frame,
@@ -297,33 +306,29 @@ def recognize_face(frame, reference_embeddings):
         )
     except Exception as exc:
         log_throttle('deepface_error', f"[WARN] DeepFace error: {exc}", interval=10.0)
+=======
+    faces = face_app.get(frame)
+
+    if len(faces) == 0:
+>>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
         return "Unknown", None
 
-    if not representation:
-        return "Unknown", None
+    face = max(faces, key=lambda f: f.det_score)
+    emb = face.embedding.astype(np.float32)
 
-    if isinstance(representation, list):
-        representation = representation[0]
+    best_name = "Unknown"
+    best_score = -1
 
-    embedding = representation.get("embedding") if isinstance(representation, dict) else None
-    if embedding is None or not reference_embeddings:
-        return "Unknown", None
-
-    best_person = "Unknown"
-    best_score = -1.0
-    embedding = np.asarray(embedding, dtype=np.float32)
-
-    for person_name, reference_embedding in reference_embeddings:
-        score = cosine_similarity(embedding, reference_embedding)
+    for name, ref in reference_embeddings:
+        score = cosine_similarity(emb, ref)
         if score > best_score:
             best_score = score
-            best_person = person_name
+            best_name = name
 
     if best_score < FACE_SIMILARITY_THRESHOLD:
-        return "Unknown", None
+        return "Unknown", best_score
 
-    return best_person, best_score
-
+    return best_name, best_score
 
 def crop_for_recognition(frame, box, padding=0.25):
     if box is None:
@@ -471,10 +476,14 @@ if not cap.isOpened():
     print("Error: could not open camera stream.")
 else:
     print("[INFO] Running YOLOv8 Person Detection. Press 'q' to quit.")
+<<<<<<< HEAD
     print(f"[INFO] DB: {DB_PATH}")
     print("[INFO] Loading face recognition reference embeddings in background...")
     load_reference_embeddings_async(DB_PATH)
     threading.Thread(target=recognition_worker, daemon=True).start()
+=======
+    print(f"[INFO] Face DB: {DB_PATH}")
+>>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
     frame_count = 0
     while True:
         ret, frame = cap.read()
@@ -486,7 +495,7 @@ else:
         frame_count += 1
 
         h, w = frame.shape[:2]
-        results = list(model(frame, stream=True, conf=CONF_THRESHOLD, device=DEVICE))
+        results = model(frame, conf=CONF_THRESHOLD, device=DEVICE)
 
         annotated = frame.copy()
         person_count = 0
@@ -505,6 +514,7 @@ else:
                 x1, y1, x2, y2 = map(int, detection_box.xyxy[0])
                 detection_list.append(((x1, y1, x2, y2), conf))
 
+<<<<<<< HEAD
         # choose box to recognize every Nth frame (largest detected person)
         recognition_box = None
         if detection_list and frame_count % RECOGNITION_EVERY == 0:
@@ -539,6 +549,21 @@ else:
 
             cv2.rectangle(annotated, (x1, y1), (x2, y2), draw_color, thickness)
             cv2.putText(annotated, label_txt, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, draw_color, 2)
+=======
+                person_count += 1
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                cv2.putText(annotated, f"Person {person_count} {conf:.2f}",
+                            (x1, y1 - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 0), 2)
+
+        if ENABLE_FACE_RECOGNITION and best_box is not None and frame_count % RECOGNITION_EVERY == 0:
+            if not reference_embeddings:
+                print("[INFO] Loading DeepFace reference embeddings...")
+                reference_embeddings = load_reference_embeddings(DB_PATH)
+
+
+                face_label, face_distance = recognize_face(frame, reference_embeddings)
+>>>>>>> 893aa750b45dde4419d8ac6814ba74aab703f4fd
 
         cx, cy, pan, tilt = 0.0, 0.0, 0.0, 0.0
 
