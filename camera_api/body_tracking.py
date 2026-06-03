@@ -528,7 +528,8 @@ def start_recording(frame):
         recording_stop_at = 0.0
         print(f"[INFO] Started recording: {filename}")
         start_alarm()
-        send_ntfy_notification("ALARM - Lockinator", f"Intruder detected! Recording: {filename.name}", frame=frame)
+        local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        send_ntfy_notification("ALARM - Lockinator", f"Intruder detected! {local_time}", frame=frame)
     except Exception as e:
         print(f"[WARN] Cannot start recording: {e}")
 
