@@ -354,8 +354,8 @@ def recognition_worker():
                 latest_recognized_box = box
             else:
                 # Unknown person / not in known group
-                # If host not present, mark as intruder
-                if not host_present:
+                # Only mark as intruder after embeddings are fully loaded
+                if not host_present and reference_embeddings_ready:
                     intruder_present = True
                     intruder_expires = time.time() + INTRUDER_TIMEOUT
                     intruder_box = box
