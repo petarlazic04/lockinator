@@ -9,6 +9,7 @@ from queue import Queue, Empty
 from pathlib import Path
 import time
 import subprocess
+import urllib.request
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from datetime import datetime
@@ -23,14 +24,14 @@ MODEL_PATH     = "yolov8n-face.pt"
 DB_PATH        = Path(__file__).resolve().parent / "pictures"
 
 FRAME_W, FRAME_H = 960, 540
-DEAD_ZONE      = 0.15
-PAN_SPEED      = 0.5
-TILT_SPEED     = 0.3
+DEAD_ZONE      = 0.25
+PAN_SPEED      = 0.2
+TILT_SPEED     = 0.2
 MOVE_DURATION  = 0.01
 CONF_THRESHOLD = 0.5
-RECOGNITION_EVERY = 30
+RECOGNITION_EVERY = 45
 ENABLE_FACE_RECOGNITION = True
-FACE_SIMILARITY_THRESHOLD = 0.5
+FACE_SIMILARITY_THRESHOLD = 0.60
 MODEL_NAME = "Facenet512"
 DETECTOR_BACKEND = "opencv"
 # ──────────────────────────────────────────────────────────
@@ -40,6 +41,44 @@ RECORDINGS_DIR = Path(__file__).resolve().parent / "recordings"
 RECORD_FPS = 20
 RECORD_BUFFER_SECONDS = 5.0  # keep recording this many seconds after person disappears
 RECORD_CODEC = "mp4v"
+
+# ntfy push notification — change topic to something unique (others could subscribe if guessable)
+NTFY_TOPIC = "lockinator-alarm-changeme"
+
+def send_ntfy_notification(title: str, message: str, frame=None):
+    def _send():
+        try:
+            if frame is not None:
+                ret, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                if ret:
+                    req = urllib.request.Request(
+                        f"https://ntfy.sh/{NTFY_TOPIC}",
+                        data=buf.tobytes(),
+                        headers={
+                            "Title": title,
+                            "Message": message,
+                            "Priority": "urgent",
+                            "Tags": "rotating_light,camera",
+                            "Content-Type": "image/jpeg",
+                            "Filename": "intruder.jpg",
+                        },
+                    )
+                    urllib.request.urlopen(req, timeout=10)
+                    return
+            req = urllib.request.Request(
+                f"https://ntfy.sh/{NTFY_TOPIC}",
+                data=message.encode(),
+                headers={
+                    "Title": title,
+                    "Priority": "urgent",
+                    "Tags": "rotating_light,camera",
+                },
+            )
+            urllib.request.urlopen(req, timeout=5)
+        except Exception as e:
+            print(f"[WARN] ntfy notification failed: {e}")
+    threading.Thread(target=_send, daemon=True).start()
+
 
 # Alarm sound configuration
 ALARM_MP3_PATH = Path(__file__).resolve().parent / "alarm.mp3"
@@ -127,14 +166,9 @@ recording_stop_at = 0.0
 saved_pan = None
 saved_tilt = None
 
-# Camera position when host is present (pointed at host's area)
+# Hardcoded camera coordinates when host present (adjust as needed)
 HARD_PAN = 0.0
 HARD_TILT = 0.0
-
-# Camera home position when no one is present — pointed at entrance/door
-# Adjust these values to aim the camera at the door
-HOME_PAN  = 0.0
-HOME_TILT = 0.0
 KNOWN_NAMES = set()
 INTRUDER_TIMEOUT = 10.0
 intruder_present = False
@@ -442,15 +476,19 @@ def _goto_host_view():
 
 def _restore_prev_view():
     global saved_pan, saved_tilt
-    saved_pan = None
-    saved_tilt = None
-    for attempt in range(3):
+    if saved_pan is None or saved_tilt is None:
+        log_throttle('no_saved_position', "[INFO] No saved camera position to restore.", interval=30.0)
+        return
+    tries = 3
+    for attempt in range(tries):
         try:
-            cam.absolute_move(pan=HOME_PAN, tilt=HOME_TILT)
-            log_throttle('restored_camera', f"[INFO] Camera returned to home position (attempt {attempt+1})", interval=30.0)
+            resp = cam.absolute_move(pan=saved_pan, tilt=saved_tilt)
+            log_throttle('restored_camera', f"[INFO] Restored camera to previous position (attempt {attempt+1})", interval=30.0)
+            saved_pan = None
+            saved_tilt = None
             break
         except Exception as e:
-            log_throttle('restore_failed', f"[WARN] Failed to move camera to home position (attempt {attempt+1}): {e}", interval=30.0)
+            log_throttle('restore_failed', f"[WARN] Failed to restore camera position (attempt {attempt+1}): {e}", interval=30.0)
             time.sleep(2)
 
 
@@ -490,6 +528,7 @@ def start_recording(frame):
         recording_stop_at = 0.0
         print(f"[INFO] Started recording: {filename}")
         start_alarm()
+        send_ntfy_notification("ALARM - Lockinator", f"Intruder detected! Recording: {filename.name}", frame=frame)
     except Exception as e:
         print(f"[WARN] Cannot start recording: {e}")
 
@@ -626,7 +665,7 @@ else:
 
         if host_confirmed:
             # show overlay that host is present and camera is on home view
-            put_text_right(annotated, "Host present - home view", row=5, color=(0, 200, 0))
+            put_text_right(annotated, "Host present - home view", row=5, color=(0, 0, 0))
         # show recording overlay if active
         if recording:
             put_text_right(annotated, "REC: recording...", row=6, color=(0, 0, 255))
@@ -673,7 +712,7 @@ else:
 
         # ── Info overlay – top right ───────────────────────
         put_text_right(annotated, f"Persons: {person_count}",  row=0, color=(255, 255, 255))
-        put_text_right(annotated, f"Face: {face_label}", row=1, color=(0, 200, 0) if face_label != "Unknown" else (0, 0, 255))
+        put_text_right(annotated, f"Face: {face_label}", row=1, color=(0, 0, 0) if face_label != "Unknown" else (0, 0, 255))
         put_text_right(annotated, f"cx: {cx:.2f}  cy: {cy:.2f}", row=2, color=(0, 255, 255))
         put_text_right(annotated, f"pan: {pan:.2f}  tilt: {tilt:.2f}", row=3, color=(0, 255, 255))
         if face_distance is not None:
