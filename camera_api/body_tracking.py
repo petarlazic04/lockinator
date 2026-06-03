@@ -8,13 +8,13 @@ import threading
 from queue import Queue, Empty
 from pathlib import Path
 import time
+import subprocess
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-import os
 from datetime import datetime
 
 # ── Configuration ─────────────────────────────────────────
-CAM_IP         = "192.168.50.222"
+CAM_IP         = "192.168.1.9"
 CAM_PORT       = 8899
 CAM_USER       = "admin"
 CAM_PASS       = "admin123"
@@ -40,6 +40,49 @@ RECORDINGS_DIR = Path(__file__).resolve().parent / "recordings"
 RECORD_FPS = 20
 RECORD_BUFFER_SECONDS = 5.0  # keep recording this many seconds after person disappears
 RECORD_CODEC = "mp4v"
+
+# Alarm sound configuration
+ALARM_MP3_PATH = Path(__file__).resolve().parent / "alarm.mp3"
+_alarm_stop_event = threading.Event()
+_alarm_thread = None
+
+
+def _alarm_loop(stop_event: threading.Event):
+    while not stop_event.is_set():
+        try:
+            proc = subprocess.Popen(
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(ALARM_MP3_PATH)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            while proc.poll() is None:
+                if stop_event.is_set():
+                    proc.terminate()
+                    return
+                time.sleep(0.05)
+        except Exception as e:
+            print(f"[WARN] Alarm playback error: {e}")
+            return
+
+
+def start_alarm():
+    global _alarm_thread, _alarm_stop_event
+    if _alarm_thread is not None and _alarm_thread.is_alive():
+        return
+    _alarm_stop_event.clear()
+    _alarm_thread = threading.Thread(target=_alarm_loop, args=(_alarm_stop_event,), daemon=True)
+    _alarm_thread.start()
+    print("[INFO] Alarm started")
+
+
+def stop_alarm():
+    global _alarm_thread
+    _alarm_stop_event.set()
+    if _alarm_thread is not None:
+        _alarm_thread.join(timeout=1.0)
+        _alarm_thread = None
+    print("[INFO] Alarm stopped")
+
 
 cam   = Camera(CAM_IP, CAM_PORT, CAM_USER, CAM_PASS)
 model = YOLO(MODEL_PATH)
@@ -84,9 +127,14 @@ recording_stop_at = 0.0
 saved_pan = None
 saved_tilt = None
 
-# Hardcoded camera coordinates when host present (adjust as needed)
+# Camera position when host is present (pointed at host's area)
 HARD_PAN = 0.0
 HARD_TILT = 0.0
+
+# Camera home position when no one is present — pointed at entrance/door
+# Adjust these values to aim the camera at the door
+HOME_PAN  = 0.0
+HOME_TILT = 0.0
 KNOWN_NAMES = set()
 INTRUDER_TIMEOUT = 10.0
 intruder_present = False
@@ -394,19 +442,15 @@ def _goto_host_view():
 
 def _restore_prev_view():
     global saved_pan, saved_tilt
-    if saved_pan is None or saved_tilt is None:
-        log_throttle('no_saved_position', "[INFO] No saved camera position to restore.", interval=30.0)
-        return
-    tries = 3
-    for attempt in range(tries):
+    saved_pan = None
+    saved_tilt = None
+    for attempt in range(3):
         try:
-            resp = cam.absolute_move(pan=saved_pan, tilt=saved_tilt)
-            log_throttle('restored_camera', f"[INFO] Restored camera to previous position (attempt {attempt+1})", interval=30.0)
-            saved_pan = None
-            saved_tilt = None
+            cam.absolute_move(pan=HOME_PAN, tilt=HOME_TILT)
+            log_throttle('restored_camera', f"[INFO] Camera returned to home position (attempt {attempt+1})", interval=30.0)
             break
         except Exception as e:
-            log_throttle('restore_failed', f"[WARN] Failed to restore camera position (attempt {attempt+1}): {e}", interval=30.0)
+            log_throttle('restore_failed', f"[WARN] Failed to move camera to home position (attempt {attempt+1}): {e}", interval=30.0)
             time.sleep(2)
 
 
@@ -445,6 +489,7 @@ def start_recording(frame):
         recording = True
         recording_stop_at = 0.0
         print(f"[INFO] Started recording: {filename}")
+        start_alarm()
     except Exception as e:
         print(f"[WARN] Cannot start recording: {e}")
 
@@ -461,6 +506,7 @@ def stop_recording():
     recording = False
     record_writer = None
     recording_stop_at = 0.0
+    stop_alarm()
     print("[INFO] Recording stopped")
 
 
