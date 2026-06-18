@@ -15,7 +15,7 @@ from collections import defaultdict
 from datetime import datetime
 
 # ── Configuration ─────────────────────────────────────────
-CAM_IP         = "192.168.1.9"
+CAM_IP         = "192.168.50.222"
 CAM_PORT       = 8899
 CAM_USER       = "admin"
 CAM_PASS       = "admin123"
@@ -36,13 +36,11 @@ MODEL_NAME = "Facenet512"
 DETECTOR_BACKEND = "opencv"
 # ──────────────────────────────────────────────────────────
 
-# Recording configuration for unknown person events
 RECORDINGS_DIR = Path(__file__).resolve().parent / "recordings"
 RECORD_FPS = 20
-RECORD_BUFFER_SECONDS = 5.0  # keep recording this many seconds after person disappears
+RECORD_BUFFER_SECONDS = 5.0
 RECORD_CODEC = "mp4v"
 
-# ntfy push notification — change topic to something unique (others could subscribe if guessable)
 NTFY_TOPIC = "lockinator-alarm-changeme"
 
 def send_ntfy_notification(title: str, message: str, frame=None):
@@ -131,7 +129,6 @@ DEVICE = 0 if torch.cuda.is_available() else "cpu"
 DEVICE_NAME = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
 print(f"[INFO] YOLO inference device: {DEVICE_NAME}")
 
-# Simple throttled logger to avoid spamming the terminal
 _last_log_time = defaultdict(lambda: 0.0)
 def log_throttle(key: str, msg: str, interval: float = 5.0):
     now = time.time()
@@ -158,15 +155,12 @@ host_next_toggle_at = 0.0
 latest_recognized_box = None
 host_confirm_start = None
 host_confirmed = False
-# Recording runtime state
 recording = False
 record_writer = None
 recording_stop_at = 0.0
-# saved absolute position to restore after host leaves
 saved_pan = None
 saved_tilt = None
 
-# Hardcoded camera coordinates when host present (adjust as needed)
 HARD_PAN = 0.0
 HARD_TILT = 0.0
 KNOWN_NAMES = set()
@@ -174,9 +168,7 @@ INTRUDER_TIMEOUT = 10.0
 intruder_present = False
 intruder_expires = 0.0
 intruder_box = None
-# Maintain home view interval (seconds)
 MAINTAIN_HOME_INTERVAL = 5.0
-# background flag to avoid spawning multiple maintainers
 maintain_home_thread_started = False
 
 
