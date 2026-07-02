@@ -2,7 +2,9 @@
 
 Ovaj repozitorijum sadrži izvorni kod i prateću dokumentaciju za sistem automatske detekcije, biometrijske verifikacije i inteligentnog praćenja pokretnih objekata (uljeza) pomoću motorizovane PTZ IP kamere. Sistem koristi napredne modele računarskog vida (YOLOv8 i DeepFace) i komunicira sa kamerom preko ONVIF i RTSP protokola.
 
----
+
+## Link do Youtube videa demo prezentacije: 
+[Smart Surveillance System - LPRS2 Labs Demo](https://youtu.be/NztaWpJhZjQ?si=pcyRL5YMFAlbq5Ce)
 
 ## Projektna Dokumentacija & Razvojni Timeline
 
